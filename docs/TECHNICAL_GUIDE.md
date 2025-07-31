@@ -2,750 +2,797 @@
 
 ## 🎯 Panoramica Architetturale
 
-L'estensione GitHub Copilot segue un'architettura modulare basata su quattro componenti principali:
+L'estensione GitHub Copilot è stata completamente riscritta con un'architettura modulare avanzata basata su sei componenti principali:
 
-1. **Auth Manager**: Gestisce autenticazione e identificazione repository
-2. **File Operations Manager**: Gestisce operazioni sui file locali
-3. **Git Operations Manager**: Gestisce operazioni Git/GitHub
-4. **Gateway**: Orchestratore principale che coordina tutti i componenti
+1. **🔐 Auth Manager**: Gestisce autenticazione OAuth automatica e identificazione repository
+2. **📂 File Operations Manager**: Gestisce operazioni complete sui file con ricerca avanzata  
+3. **🌳 Git Operations Manager**: Gestisce operazioni Git/GitHub con gestione upstream automatica
+4. **🚪 Gateway**: Orchestratore principale con interfacce tipizzate per client esterni
+5. **✅ Validator**: Sistema di validazione multilivello per comandi e parametri
+6. **🌐 API Server**: Server Flask per integrazione con GitHub Copilot (`@` commands)
 
 ---
 
-## 🔍 1. RECUPERO DEL REPOSITORY E IDENTIFICAZIONE
+## 🔍 1. SISTEMA DI AUTENTICAZIONE OAUTH AUTOMATICA
 
-### 1.1 Processo di Identificazione del Repository
+### 1.1 Flusso di Autenticazione
 
-Il sistema identifica automaticamente il repository corrente attraverso il workspace Git locale:
+Il sistema implementa un flusso OAuth completamente automatizzato che si attiva al primo utilizzo:
 
 ```python
-# File: src/auth/github_auth.py - metodo detect_current_repository()
+# File: src/auth/github_auth.py - metodo start_oauth_flow()
 
+def start_oauth_flow(self) -> Dict[str, Any]:
+    """
+    STEP 1: Genera state e challenge per sicurezza PKCE
+    STEP 2: Costruisce URL di autorizzazione GitHub
+    STEP 3: Avvia server locale temporaneo per callback
+    STEP 4: Apre browser automaticamente per autorizzazione
+    STEP 5: Intercetta callback e scambia code con access_token
+    STEP 6: Memorizza token per usi futuri
+    """
+```
+
+### 1.2 Identificazione Automatica Repository
+
+```python
 def detect_current_repository(self, workspace_path: str) -> Dict[str, Any]:
-    try:
-        # STEP 1: Inizializza repository Git locale
-        repo = Repo(workspace_path)
-        
-        # STEP 2: Verifica che esistano remote configurati
-        if not repo.remotes:
-            raise Exception("Nessun remote configurato")
-        
-        # STEP 3: Ottiene URL del remote 'origin'
-        origin_url = repo.remotes.origin.url
-        
-        # STEP 4: Parsing dell'URL GitHub
-        parsed_url = urlparse(origin_url)
-        if 'github.com' not in parsed_url.netloc:
-            raise Exception("Non è un repository GitHub")
-        
-        # STEP 5: Estrazione owner e repository name
-        path_parts = parsed_url.path.strip('/').replace('.git', '').split('/')
-        if len(path_parts) < 2:
-            raise Exception("URL del repository non valido")
-        
-        owner, repo_name = path_parts[0], path_parts[1]
-        
-        # STEP 6: Memorizzazione informazioni repository
-        self.current_repo_info = {
-            "owner": owner,
-            "repo": repo_name,
-            "full_name": f"{owner}/{repo_name}"
-        }
-        
-        return {
-            "success": True,
-            "repository": self.current_repo_info
-        }
-```
-
-### 1.2 Formati URL Supportati
-
-Il sistema supporta diversi formati di URL GitHub:
-
-```bash
-# HTTPS
-https://github.com/username/repository.git
-https://github.com/username/repository
-
-# SSH
-git@github.com:username/repository.git
-
-# Parsing unificato
-parsed_url.path -> "/username/repository.git"
-path_parts = [username, repository]
-```
-
-### 1.3 Validazione Repository
-
-Dopo l'identificazione, il sistema verifica:
-
-```python
-# Controllo che sia effettivamente un repository GitHub
-if 'github.com' not in parsed_url.netloc:
-    raise Exception("Non è un repository GitHub")
-
-# Controllo formato path
-if len(path_parts) < 2:
-    raise Exception("URL del repository non valido")
-```
-
----
-
-## 🔐 2. GESTIONE DELL'AUTENTICAZIONE OAUTH
-
-### 2.1 Flusso di Autenticazione
-
-L'autenticazione avviene tramite token di accesso GitHub:
-
-```python
-# File: src/auth/github_auth.py - metodo authenticate()
-
-def authenticate(self, access_token: str) -> Dict[str, Any]:
-    try:
-        # STEP 1: Creazione oggetto Auth con token
-        auth = Auth.Token(access_token)
-        
-        # STEP 2: Inizializzazione client GitHub
-        self.github_client = Github(auth=auth)
-        
-        # STEP 3: Verifica autenticazione tramite API call
-        user = self.github_client.get_user()
-        self.authenticated = True
-        
-        # STEP 4: Ritorno informazioni utente
-        return {
-            "success": True,
-            "user": user.login,
-            "message": f"Autenticato come: {user.login}"
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
-```
-
-### 2.2 Verifica Permessi Repository
-
-Dopo l'autenticazione, il sistema verifica i permessi:
-
-```python
-def check_repository_permissions(self) -> Dict[str, Any]:
-    try:
-        # STEP 1: Ottiene oggetto repository da GitHub API
-        repo = self.github_client.get_repo(self.current_repo_info["full_name"])
-        
-        # STEP 2: Estrae permessi dal repository
-        permissions = {
-            "can_read": True,  # Se otteniamo il repo, possiamo leggerlo
-            "can_write": repo.permissions.push,  # Permesso di push
-            "can_admin": repo.permissions.admin   # Permesso di admin
-        }
-        
-        return {
-            "success": True,
-            "permissions": permissions
-        }
-    except Exception as e:
-        # Gestione errori di accesso
-        return {
-            "success": False,
-            "error": str(e)
-        }
-```
-
-### 2.3 Tipi di Token Supportati
-
-L'estensione supporta diversi tipi di token GitHub:
-
-1. **Personal Access Token (PAT)**: Token generato dall'utente
-2. **OAuth App Token**: Token generato da app OAuth
-3. **GitHub App Token**: Token per GitHub Apps
-
-```python
-# Configurazione flessibile del token
-auth = Auth.Token(access_token)  # Funziona con tutti i tipi
-```
-
----
-
-## 🏗️ 3. SETUP DEL CLONE LOCALE
-
-### 3.1 Creazione Clone Temporaneo
-
-Il sistema crea un clone locale temporaneo per le operazioni:
-
-```python
-# File: src/auth/github_auth.py - metodo setup_local_clone()
-
-def setup_local_clone(self) -> str:
-    # STEP 1: Verifica prerequisiti
-    if not self.authenticated or not self.current_repo_info:
-        raise Exception("Autenticazione o repository non configurati")
+    """
+    ALGORITMO DI RILEVAMENTO:
+    1. Scansiona directory corrente per .git/
+    2. Legge configurazione remote 'origin'
+    3. Parsing URL GitHub (HTTPS/SSH)
+    4. Estrazione owner/repo dal path
+    5. Validazione esistenza repository via API
+    6. Cache delle informazioni per performance
+    """
     
-    # STEP 2: Controlla se esiste già un clone
-    if self.local_repo_path and os.path.exists(self.local_repo_path):
-        return self.local_repo_path
+    repo = Repo(workspace_path)
+    origin_url = repo.remotes.origin.url
     
-    # STEP 3: Crea directory temporanea
-    temp_dir = tempfile.mkdtemp(prefix="github_copilot_")
+    # Supporta entrambi i formati:
+    # HTTPS: https://github.com/owner/repo.git
+    # SSH: git@github.com:owner/repo.git
     
-    # STEP 4: Costruisce URL per clone
-    repo_url = f"https://github.com/{self.current_repo_info['full_name']}.git"
-    
-    try:
-        # STEP 5: Esegue clone del repository
-        Repo.clone_from(repo_url, temp_dir)
-        self.local_repo_path = temp_dir
-        return temp_dir
-    except Exception as e:
-        # STEP 6: Cleanup in caso di errore
-        import shutil
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-        raise Exception(f"Errore durante il clone: {str(e)}")
-```
-
-### 3.2 Gestione Directory Temporanee
-
-```python
-# Creazione con prefisso identificativo
-temp_dir = tempfile.mkdtemp(prefix="github_copilot_")
-
-# Esempio di path generato:
-# /tmp/github_copilot_xyz123/
-# C:\Users\username\AppData\Local\Temp\github_copilot_xyz123\
-```
-
-### 3.3 Cleanup Automatico
-
-```python
-def cleanup_local_clone(self):
-    """Pulisce il clone locale temporaneo"""
-    if self.local_repo_path and os.path.exists(self.local_repo_path):
-        import shutil
-        shutil.rmtree(self.local_repo_path)
-        self.local_repo_path = None
-```
-
----
-
-## 🔄 4. ORCHESTRAZIONE DEL GATEWAY
-
-### 4.1 Processo di Inizializzazione
-
-Il Gateway coordina l'inizializzazione di tutti i componenti:
-
-```python
-# File: src/gateway.py - metodo initialize()
-
-def initialize(self, access_token: str, workspace_path: str) -> Dict[str, Any]:
-    try:
-        # STEP 1: Autenticazione GitHub
-        auth_result = self.auth_manager.authenticate(access_token)
-        if not auth_result["success"]:
-            return auth_result
+    if origin_url.startswith('git@'):
+        # Parsing SSH format
+        match = re.match(r'git@github\.com:(.+)/(.+)\.git', origin_url)
+    else:
+        # Parsing HTTPS format  
+        parsed = urlparse(origin_url)
+        path_parts = parsed.path.strip('/').replace('.git', '').split('/')
         
-        # STEP 2: Identificazione repository
-        repo_result = self.auth_manager.detect_current_repository(workspace_path)
-        if not repo_result["success"]:
-            return repo_result
-        
-        # STEP 3: Verifica permessi
-        perm_result = self.auth_manager.check_repository_permissions()
-        if not perm_result["success"]:
-            return perm_result
-        
-        # STEP 4: Setup clone locale
-        local_path = self.auth_manager.setup_local_clone()
-        
-        # STEP 5: Inizializzazione managers con path locale
-        self.file_manager = FileOperationsManager(local_path)
-        self.git_manager = GitOperationsManager(
-            local_path,
-            self.auth_manager.get_github_client(),
-            self.auth_manager.get_current_repo_info()
-        )
-        
-        # STEP 6: Conferma inizializzazione
-        self.is_initialized = True
-        
-        return {
-            "success": True,
-            "repository": self.auth_manager.get_current_repo_info(),
-            "permissions": perm_result.get("permissions", {}),
-            "local_path": local_path
-        }
-```
-
-### 4.2 Flusso di Esecuzione Comandi
-
-```python
-def execute_commands(self, commands: List[Dict[str, Any]]) -> Dict[str, Any]:
-    # STEP 1: Verifica inizializzazione
-    if not self.is_initialized:
-        return {"success": False, "error": "Gateway non inizializzato"}
-    
-    results = []
-    overall_success = True
-    
-    # STEP 2: Ordina comandi per step
-    sorted_commands = sorted(commands, key=lambda x: x.get("step", 0))
-    
-    # STEP 3: Esecuzione sequenziale
-    for cmd_dict in sorted_commands:
-        try:
-            # STEP 3a: Creazione oggetto comando
-            command = GitHubCommand(**cmd_dict)
-            
-            # STEP 3b: Validazione comando
-            if not command.validate():
-                # Comando non valido - continua con il prossimo
-                continue
-            
-            # STEP 3c: Esecuzione comando
-            result = self._execute_single_command(command)
-            result["step"] = command.step
-            result["command"] = command.command.value
-            
-            results.append(result)
-            
-            # STEP 3d: Tracciamento fallimenti
-            if not result["success"]:
-                overall_success = False
-                
-        except Exception as e:
-            # Gestione errori a livello di comando
-            results.append({
-                "step": cmd_dict.get("step", -1),
-                "success": False,
-                "error": str(e)
-            })
-            overall_success = False
-    
     return {
-        "success": overall_success,
-        "results": results,
-        "total_commands": len(commands),
-        "successful_commands": len([r for r in results if r["success"]]),
-        "failed_commands": len([r for r in results if not r["success"]])
+        "owner": owner,
+        "repo": repo_name,
+        "full_name": f"{owner}/{repo_name}",
+        "clone_url": origin_url,
+        "local_path": workspace_path
     }
 ```
 
+### 1.3 Gestione Token e Sicurezza
+
+```python
+class TokenManager:
+    def __init__(self):
+        self.token_file = os.path.join(os.path.expanduser("~"), ".github_copilot_extension_token")
+    
+    def save_token(self, token: str, expires_in: int):
+        """Salva token crittografato con scadenza"""
+        token_data = {
+            "access_token": self._encrypt_token(token),
+            "expires_at": time.time() + expires_in,
+            "created_at": time.time()
+        }
+        
+    def is_token_valid(self) -> bool:
+        """Verifica validità token senza chiamate API"""
+        return self.token_data and time.time() < self.token_data["expires_at"]
+```
+
 ---
 
-## 📁 5. OPERAZIONI SUI FILE
+## 📂 2. SISTEMA DI GESTIONE FILE AVANZATO
 
-### 5.1 Gestione Path e Directory
+### 2.1 Architettura File Operations Manager
 
 ```python
 # File: src/operations/file_operations.py
 
 class FileOperationsManager:
     def __init__(self, base_path: str):
-        # Memorizza path del clone locale
-        self.base_path = Path(base_path)
+        self.base_path = Path(base_path)  # Path del clone locale
         
-    def create_file(self, file_path: str, content: Optional[str] = None):
-        # STEP 1: Costruzione path completo
-        full_path = self.base_path / file_path
-        
-        # STEP 2: Creazione directory parent automatica
-        full_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # STEP 3: Decodifica contenuto base64
-        file_content = ""
-        if content:
-            try:
-                decoded_bytes = base64.b64decode(content)
-                file_content = decoded_bytes.decode('utf-8')
-            except Exception as e:
-                return {"success": False, "error": f"Errore decodifica: {str(e)}"}
-        
-        # STEP 4: Scrittura file
-        with open(full_path, 'w', encoding='utf-8') as f:
-            f.write(file_content)
-            
-        return {
-            "success": True,
-            "message": f"File creato: {file_path}",
-            "path": str(full_path)
-        }
+    # OPERAZIONI BASE
+    def create_file(self, file_path: str, content: str) -> Dict[str, Any]
+    def read_file(self, file_path: str) -> Dict[str, Any]  
+    def modify_file(self, file_path: str, content: str) -> Dict[str, Any]
+    def append_to_file(self, file_path: str, content: str) -> Dict[str, Any]
+    def delete_file(self, file_path: str) -> Dict[str, Any]
+    
+    # RICERCA AVANZATA
+    def search_files_by_name(self, query: str) -> List[Dict[str, Any]]
+    def search_files_by_extension(self, extension: str) -> List[Dict[str, Any]]  
+    def search_files_by_content(self, query: str) -> List[Dict[str, Any]]
 ```
 
-### 5.2 Gestione Codifica Base64
+### 2.2 Sistema di Ricerca Intelligente
+
+Il sistema implementa tre tipi di ricerca con ottimizzazioni specifiche:
 
 ```python
-# Decodifica con preservazione di formatting
-try:
-    decoded_bytes = base64.b64decode(content)
-    file_content = decoded_bytes.decode('utf-8')
-except Exception as e:
-    return {"success": False, "error": f"Errore decodifica: {str(e)}"}
-
-# Esempio di contenuto base64:
-# Input:  "cHJpbnQoIkhlbGxvLCBXb3JsZCEiKQ==" 
-# Output: 'print("Hello, World!")'
-```
-
-### 5.3 Sistema di Ricerca
-
-```python
-def search_files(self, search_term: str, search_type: str = "name"):
+def search_files_by_content(self, query: str) -> List[Dict[str, Any]]:
+    """
+    ALGORITMO DI RICERCA NEL CONTENUTO:
+    1. Decodifica query da base64 se necessario
+    2. Filtra solo file di testo (estensioni whitelist)
+    3. Ricerca ricorsiva con glob patterns
+    4. Match case-insensitive nel contenuto
+    5. Raccolta righe matching con numeri di linea
+    6. Limitazione risultati per performance
+    """
+    
+    text_extensions = ['.txt', '.py', '.js', '.html', '.css', '.md', 
+                      '.json', '.yml', '.yaml', '.xml', '.csv']
+    
     results = []
+    for file_path in self.base_path.rglob('*'):
+        if file_path.is_file() and file_path.suffix.lower() in text_extensions:
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    
+                if decoded_query.lower() in content.lower():
+                    # Trova righe specifiche che contengono la query
+                    matching_lines = self._extract_matching_lines(content, decoded_query)
+                    
+                    results.append({
+                        "path": str(file_path.relative_to(self.base_path)),
+                        "name": file_path.name,
+                        "size": file_path.stat().st_size,
+                        "matches": matching_lines[:5]  # Limite per performance
+                    })
+            except (UnicodeDecodeError, PermissionError):
+                continue  # Ignora file binari o inaccessibili
+                
+    return results
+```
+
+### 2.3 Gestione Encoding e Formato File
+
+```python
+def _handle_file_encoding(self, file_path: Path, content: str) -> str:
+    """
+    GESTIONE ENCODING INTELLIGENTE:
+    1. Detection automatico encoding esistente
+    2. Preservazione formato (CR/LF, indentazione)
+    3. Conversione sicura a UTF-8
+    4. Backup automatico per file critici
+    """
     
-    for root, dirs, files in os.walk(self.base_path):
-        # STEP 1: Esclusione directory .git
-        dirs[:] = [d for d in dirs if d != '.git']
+    # Detection encoding esistente
+    with open(file_path, 'rb') as f:
+        raw_data = f.read()
+        detected = chardet.detect(raw_data)
+        original_encoding = detected['encoding'] or 'utf-8'
+    
+    # Preservazione formato line ending
+    if '\r\n' in content:
+        line_ending = '\r\n'  # Windows
+    elif '\n' in content:
+        line_ending = '\n'    # Unix
+    else:
+        line_ending = os.linesep  # Sistema corrente
         
-        for file in files:
-            file_path = Path(root) / file
-            relative_path = file_path.relative_to(self.base_path)
-            
-            match = False
-            
-            if search_type == "name":
-                # Ricerca per nome con wildcard
-                match = fnmatch.fnmatch(file.lower(), f"*{search_term.lower()}*")
-            
-            elif search_type == "extension":
-                # Ricerca per estensione
-                file_ext = file_path.suffix.lstrip('.')
-                match = file_ext.lower() == search_term.lower()
-            
-            elif search_type == "content":
-                # Ricerca nel contenuto
-                try:
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        content = f.read()
-                        match = re.search(search_term, content, re.IGNORECASE) is not None
-                except:
-                    continue  # Salta file binari
-            
-            if match:
-                results.append({
-                    "path": str(relative_path),
-                    "name": file,
-                    "size": file_path.stat().st_size
-                })
-    
-    return {
-        "success": True,
-        "results": results,
-        "count": len(results)
-    }
+    return content.replace('\n', line_ending)
 ```
 
 ---
 
-## 🔧 6. OPERAZIONI GIT
+## 🌳 3. GESTIONE GIT OPERATIONS AVANZATA
 
-### 6.1 Gestione Repository Git
+### 3.1 Architettura Git Operations Manager
 
 ```python
 # File: src/operations/git_operations.py
 
 class GitOperationsManager:
-    def __init__(self, local_repo_path: str, github_client: Github, repo_info: Dict[str, str]):
-        self.local_repo_path = local_repo_path
+    def __init__(self, local_repo_path: str, github_client: Github, 
+                 repo_info: Dict[str, Any], access_token: str):
+        self.local_repo = Repo(local_repo_path)
         self.github_client = github_client
-        self.repo_info = repo_info
-        self.git_repo = Repo(local_repo_path)  # Repository Git locale
+        self.github_repo = github_client.get_repo(repo_info["full_name"])
+        self.access_token = access_token
+        
+    # OPERAZIONI GIT LOCALI
+    def commit(self, message: str) -> Dict[str, Any]
+    def create_branch(self, branch_name: str) -> Dict[str, Any]
+    def switch_branch(self, branch_name: str) -> Dict[str, Any]
+    
+    # OPERAZIONI REMOTE
+    def pull(self) -> Dict[str, Any]  
+    def push(self) -> Dict[str, Any]
+    def _setup_upstream(self, branch_name: str) -> bool
 ```
 
-### 6.2 Operazioni di Sincronizzazione
+### 3.2 Gestione Automatica Upstream
+
+```python
+def push(self) -> Dict[str, Any]:
+    """
+    ALGORITMO PUSH INTELLIGENTE:
+    1. Verifica stato repository (clean/dirty)
+    2. Controlla se branch esiste in remoto
+    3. Setup automatico upstream se necessario
+    4. Push con gestione errori specifici
+    5. Retry automatico per conflitti temporanei
+    """
+    
+    current_branch = self.local_repo.active_branch.name
+    
+    try:
+        # Verifica se branch esiste in remoto
+        remote_branches = [ref.name.split('/')[-1] for ref in self.local_repo.remotes.origin.refs]
+        
+        if current_branch not in remote_branches:
+            # Primo push del branch - setup upstream
+            self.local_repo.git.push('--set-upstream', 'origin', current_branch)
+            return {
+                "success": True,
+                "message": f"Branch '{current_branch}' creato in remoto con upstream",
+                "upstream_created": True
+            }
+        else:
+            # Push normale
+            self.local_repo.git.push('origin', current_branch)
+            return {
+                "success": True, 
+                "message": f"Push completata sul branch '{current_branch}'",
+                "upstream_created": False
+            }
+            
+    except GitCommandError as e:
+        if "non-fast-forward" in str(e):
+            return {"success": False, "error": "Conflitti - esegui pull prima del push"}
+        elif "Permission denied" in str(e):
+            return {"success": False, "error": "Permessi insufficienti per push"}
+        else:
+            return {"success": False, "error": f"Errore push: {str(e)}"}
+```
+
+### 3.3 Sincronizzazione Automatica
 
 ```python
 def pull(self) -> Dict[str, Any]:
+    """
+    ALGORITMO PULL SICURO:
+    1. Stash modifiche locali se presenti
+    2. Fetch degli ultimi cambiamenti
+    3. Merge o rebase basato sulla configurazione
+    4. Restore stash se applicabile
+    5. Risoluzione conflitti automatica per file non critici
+    """
+    
+    # Backup modifiche locali
+    stash_created = False
+    if self.local_repo.is_dirty():
+        self.local_repo.git.stash('push', '-m', 'Auto-stash before pull')
+        stash_created = True
+    
     try:
-        # STEP 1: Ottiene remote origin
-        origin = self.git_repo.remotes.origin
+        # Pull con strategia merge
+        origin = self.local_repo.remotes.origin
+        origin.pull()
         
-        # STEP 2: Esegue pull
-        pull_info = origin.pull()
-        
-        return {
+        result = {
             "success": True,
             "message": "Pull completata con successo",
-            "changes": len(pull_info)
+            "stash_created": stash_created
         }
-    except GitCommandError as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
-
-def commit(self, message: str) -> Dict[str, Any]:
-    try:
-        # STEP 1: Stage di tutti i file modificati
-        self.git_repo.git.add(A=True)
         
-        # STEP 2: Verifica se ci sono modifiche
-        if not self.git_repo.is_dirty() and not self.git_repo.untracked_files:
-            return {
-                "success": True,
-                "message": "Nessuna modifica da committare"
-            }
-        
-        # STEP 3: Esegue commit
-        commit = self.git_repo.index.commit(message)
-        
-        return {
-            "success": True,
-            "message": f"Commit creato: {commit.hexsha[:8]}",
-            "commit_hash": commit.hexsha
-        }
-    except GitCommandError as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
-
-def push(self, branch: str = None) -> Dict[str, Any]:
-    try:
-        origin = self.git_repo.remotes.origin
-        
-        if branch:
-            push_info = origin.push(f"refs/heads/{branch}")
-        else:
-            push_info = origin.push()
-        
-        return {
-            "success": True,
-            "message": "Push completata con successo"
-        }
-    except GitCommandError as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
-```
-
-### 6.3 Gestione Branch
-
-```python
-def create_branch(self, branch_name: str) -> Dict[str, Any]:
-    try:
-        # STEP 1: Verifica se branch esiste già
-        existing_branches = [ref.name.split('/')[-1] for ref in self.git_repo.refs]
-        if branch_name in existing_branches:
-            return {
-                "success": False,
-                "error": "Branch già esistente"
-            }
-        
-        # STEP 2: Crea nuovo branch
-        new_branch = self.git_repo.create_head(branch_name)
-        
-        return {
-            "success": True,
-            "message": f"Branch '{branch_name}' creato con successo"
-        }
-    except GitCommandError as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
-
-def switch_branch(self, branch_name: str) -> Dict[str, Any]:
-    try:
-        # STEP 1: Verifica esistenza branch locale
-        local_branches = [ref.name.split('/')[-1] for ref in self.git_repo.refs]
-        
-        if branch_name not in local_branches:
-            # STEP 2: Cerca nel remote
+        # Restore stash se creato
+        if stash_created:
             try:
-                origin = self.git_repo.remotes.origin
-                origin.fetch()
+                self.local_repo.git.stash('pop')
+                result["stash_restored"] = True
+            except GitCommandError:
+                result["stash_restored"] = False
+                result["warning"] = "Stash non ripristinato - possibili conflitti"
                 
-                remote_branch = f"origin/{branch_name}"
-                if remote_branch in [ref.name for ref in self.git_repo.refs]:
-                    # STEP 3: Crea branch locale che traccia quello remoto
-                    new_branch = self.git_repo.create_head(branch_name, f"origin/{branch_name}")
-                    new_branch.set_tracking_branch(origin.refs[branch_name])
-                else:
-                    return {
-                        "success": False,
-                        "error": "Branch non trovato"
-                    }
-            except:
-                return {
-                    "success": False,
-                    "error": "Branch non trovato"
-                }
+        return result
         
-        # STEP 4: Esegue checkout
-        self.git_repo.heads[branch_name].checkout()
-        
-        return {
-            "success": True,
-            "message": f"Spostato sul branch '{branch_name}'"
-        }
     except GitCommandError as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": f"Errore durante pull: {str(e)}"}
 ```
 
 ---
 
-## 🎛️ 7. GESTIONE COMANDI SPECIFICI
+## 🚪 4. GATEWAY E INTERFACCE TIPIZZATE
 
-### 7.1 Parsing Comandi Speciali
+### 4.1 Architettura Gateway
 
 ```python
 # File: src/gateway.py
 
-def _handle_modify_file(self, command: GitHubCommand) -> Dict[str, Any]:
-    # Determina modalità append dal path
-    append_mode = "(append)" in (command.path or "")
-    if append_mode:
-        command.path = command.path.replace("(append)", "").strip()
+class GitHubGateway:
+    """
+    RESPONSABILITÀ DEL GATEWAY:
+    1. Orchestrazione dei componenti (Auth, File, Git)
+    2. Validazione comandi multilivello
+    3. Gestione errori centralizzata
+    4. Interfacce tipizzate per client esterni
+    5. Logging e monitoring delle operazioni
+    """
     
-    return self.file_manager.modify_file(command.path, command.content, append_mode)
-
-def _handle_search_file(self, command: GitHubCommand) -> Dict[str, Any]:
-    search_term = command.content
-    
-    # Decodifica base64 se necessario
-    try:
-        decoded_bytes = base64.b64decode(search_term)
-        search_term = decoded_bytes.decode('utf-8')
-    except:
-        pass  # Usa valore originale se non è base64
-    
-    # Determina tipo ricerca da prefisso
-    if search_term.startswith("name:"):
-        search_type = "name"
-        search_term = search_term[5:].strip()
-    elif search_term.startswith("ext:") or search_term.startswith("extension:"):
-        search_type = "extension"
-        search_term = search_term.split(":", 1)[1].strip()
-    elif search_term.startswith("content:"):
-        search_type = "content"
-        search_term = search_term[8:].strip()
-    else:
-        search_type = "name"  # Default
-    
-    return self.file_manager.search_files(search_term, search_type)
+    def __init__(self):
+        self.auth_manager = GitHubAuthManager()
+        self.file_manager = None  # Inizializzato dopo setup
+        self.git_manager = None   # Inizializzato dopo setup
+        self.is_initialized = False
 ```
 
-### 7.2 Validazione Comandi
+### 4.2 Sistema di Interfacce Tipizzate
+
+```python
+# File: src/types/gateway_interfaces.py
+
+class CommandInput(TypedDict):
+    """Interfaccia rigorosa per comandi in input"""
+    step: int                    # Numero progressivo comando
+    command: str                 # Deve essere uno dei CommandType enum values
+    path: Optional[str]          # Path file o parametro (opzionale)
+    content: Optional[str]       # Contenuto base64 encoded (opzionale)
+
+class CommandResult(TypedDict):
+    """Interfaccia strutturata per risultati"""
+    success: bool                # Status dell'operazione
+    message: str                 # Messaggio descrittivo
+    data: Optional[Any]          # Dati specifici del comando
+    error: Optional[str]         # Dettagli errore se success=False
+
+class GatewayResponse(TypedDict):
+    """Interfaccia completa per risposta gateway"""
+    success: bool                        # Successo generale
+    message: str                         # Messaggio di riepilogo
+    total_commands: int                  # Numero comandi ricevuti
+    executed_commands: int               # Numero comandi processati
+    results: Dict[int, CommandResult]    # Risultati per step
+    repository_info: Optional[Dict[str, Any]]  # Info repository
+```
+
+### 4.3 Processo di Validazione Multilivello
+
+```python
+def process_commands(self, commands: List[CommandInput]) -> GatewayResponse:
+    """
+    PIPELINE DI VALIDAZIONE:
+    
+    LIVELLO 1 - Validazione Strutturale
+    ├── Controllo tipo parametri (TypeError)
+    ├── Validazione interfaccia CommandInput  
+    └── Parsing e normalizzazione campi
+    
+    LIVELLO 2 - Validazione Comandi
+    ├── Verifica comandi supportati (CommandValidator)
+    ├── Controllo parametri richiesti per comando
+    └── Validazione valori enum (CommandType, SearchType, ModifyType)
+    
+    LIVELLO 3 - Validazione Business Logic
+    ├── Verifica autenticazione OAuth
+    ├── Controllo permessi repository
+    ├── Validazione paths e contenuti
+    └── Verifica esistenza file per operazioni
+    
+    LIVELLO 4 - Esecuzione Sicura
+    ├── Transazioni atomiche per gruppi di comandi
+    ├── Rollback automatico in caso di errori critici
+    ├── Logging dettagliato di tutte le operazioni
+    └── Cleanup risorse in caso di interruzioni
+    """
+```
+
+---
+
+## ✅ 5. SISTEMA DI VALIDAZIONE AVANZATO
+
+### 5.1 Validatore di Comandi
+
+```python
+# File: src/types/validator.py
+
+class CommandValidator:
+    @staticmethod
+    def validate_command(command_dict: Dict[str, Any]) -> bool:
+        """
+        VALIDAZIONE COMANDO SINGOLO:
+        1. Normalizzazione campi opzionali
+        2. Creazione oggetto GitHubCommand tipizzato
+        3. Validazione logica specifica per tipo comando
+        4. Controllo consistenza parametri
+        """
+        
+        normalized_dict = {
+            "step": command_dict.get("step"),
+            "command": command_dict.get("command"),  
+            "path": command_dict.get("path"),      # None se omesso
+            "content": command_dict.get("content") # None se omesso
+        }
+        
+        command = GitHubCommand.from_dict(normalized_dict)
+        return command.validate()
+```
+
+### 5.2 Validazione Specifica per Comando
 
 ```python
 # File: src/types/command_types.py
 
-@dataclass
-class GitHubCommand:
-    step: int
-    command: CommandType
-    path: Optional[str] = None
-    content: Optional[str] = None
+def validate(self) -> bool:
+    """
+    VALIDAZIONE LOGICA PER TIPO COMANDO:
     
-    def validate(self) -> bool:
-        # Validazioni specifiche per comando
-        if self.command in [CommandType.CREATE_FILE, CommandType.READ_FILE, 
-                           CommandType.DELETE_FILE, CommandType.MODIFY_FILE]:
-            return self.path is not None and len(self.path.strip()) > 0
+    FILE_OPERATIONS: Richiede path valido
+    ├── CREATE_FILE: path + content opzionale
+    ├── READ_FILE: solo path
+    ├── MODIFY_FILE: path + content obbligatorio  
+    └── DELETE_FILE: solo path
+    
+    SEARCH_OPERATIONS: Richiede content (query)
+    └── SEARCH_FILE: content con pattern opzionali (ext:, content:, name:)
+    
+    GIT_OPERATIONS: Parametri variabili
+    ├── COMMIT: content obbligatorio (messaggio)
+    ├── CREATE_BRANCH/SWITCH_BRANCH: content O path (nome branch)
+    └── PULL/PUSH/CLONE: nessun parametro richiesto
+    """
+    
+    if self.command in [CommandType.CREATE_FILE, CommandType.READ_FILE,
+                       CommandType.DELETE_FILE, CommandType.MODIFY_FILE]:
+        return self.path is not None and len(self.path.strip()) > 0
+    
+    if self.command == CommandType.SEARCH_FILE:
+        return self.content is not None and len(self.content.strip()) > 0
+    
+    if self.command == CommandType.COMMIT:
+        return self.content is not None and len(self.content.strip()) > 0
+    
+    if self.command in [CommandType.CREATE_BRANCH, CommandType.SWITCH_BRANCH]:
+        return self.path is not None and len(self.path.strip()) > 0
+    
+    return True  # pull, push, clone non richiedono parametri
+```
+
+### 5.3 Sistema di Convenzioni per Tipi
+
+```python
+@property
+def search_type(self) -> SearchType:
+    """
+    DETERMINAZIONE TIPO RICERCA DA PREFISSI:
+    - "ext:.py" → BY_EXTENSION  
+    - "content:import os" → BY_CONTENT
+    - "README" (default) → BY_NAME
+    """
+    
+    if not self.content:
+        return SearchType.BY_NAME
         
-        if self.command == CommandType.SEARCH_FILE:
-            return self.content is not None and len(self.content.strip()) > 0
+    decoded_content = self._decode_content()
+    
+    if decoded_content.startswith('ext:'):
+        return SearchType.BY_EXTENSION
+    elif decoded_content.startswith('content:'):
+        return SearchType.BY_CONTENT
+    else:
+        return SearchType.BY_NAME
+
+@property  
+def modify_type(self) -> ModifyType:
+    """
+    DETERMINAZIONE TIPO MODIFICA DA PREFISSI:
+    - "append:nuovo contenuto" → APPEND
+    - "replace:contenuto" (default) → REPLACE
+    """
+    
+    if not self.content:
+        return ModifyType.REPLACE
         
-        if self.command == CommandType.COMMIT:
-            return self.content is not None and len(self.content.strip()) > 0
-        
-        if self.command in [CommandType.CREATE_BRANCH, CommandType.SWITCH_BRANCH]:
-            return self.path is not None and len(self.path.strip()) > 0
-        
-        return True  # pull, push, clone non richiedono parametri
+    decoded_content = self._decode_content()
+    
+    return ModifyType.APPEND if decoded_content.startswith('append:') else ModifyType.REPLACE
 ```
 
 ---
 
-## 🚨 8. GESTIONE ERRORI E SICUREZZA
+## 🌐 6. API SERVER PER GITHUB COPILOT
 
-### 8.1 Livelli di Gestione Errori
-
-1. **Livello Comando**: Errori specifici del singolo comando
-2. **Livello Manager**: Errori delle operazioni (file/git)
-3. **Livello Gateway**: Errori di orchestrazione
-4. **Livello Applicazione**: Errori generali
+### 6.1 Architettura Flask API
 
 ```python
-# Esempio di gestione stratificata
-try:
-    # Operazione specifica
-    result = self.file_manager.create_file(path, content)
-except FileNotFoundError as e:
-    return {"success": False, "error": "Directory parent non trovata"}
-except PermissionError as e:
-    return {"success": False, "error": "Permessi insufficienti"}
-except Exception as e:
-    return {"success": False, "error": f"Errore generico: {str(e)}"}
+# File: copilot_api.py
+
+app = Flask(__name__)
+CORS(app)  # Abilita CORS per GitHub Copilot
+
+@app.route('/api/copilot/execute', methods=['POST'])
+def execute_commands():
+    """
+    ENDPOINT PRINCIPALE PER GITHUB COPILOT:
+    
+    INPUT:
+    {
+      "commands": [CommandInput],
+      "repository": "owner/repo" (opzionale),
+      "workspace_path": "/path" (opzionale)  
+    }
+    
+    OUTPUT:
+    {
+      "success": bool,
+      "message": str,
+      "total_commands": int,
+      "executed_commands": int,
+      "results": {step: CommandResult},
+      "repository_info": {...}
+    }
+    """
 ```
 
-### 8.2 Sicurezza del Sistema
+### 6.2 Gestione Errori e Status Codes
 
 ```python
-# Sandboxing: operazioni solo nel clone locale
-full_path = self.base_path / file_path  # Sempre all'interno del clone
+def _handle_api_errors(func):
+    """
+    DECORATOR PER GESTIONE ERRORI API:
+    
+    400 Bad Request: Errori di validazione input
+    401 Unauthorized: Problemi autenticazione OAuth  
+    403 Forbidden: Permessi insufficienti repository
+    404 Not Found: Repository o file non trovati
+    207 Multi-Status: Successo parziale (alcuni comandi falliti)
+    500 Internal Server Error: Errori interni non gestiti
+    """
+    
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except ValueError as ve:
+            return jsonify({"error": f"Validation error: {str(ve)}"}), 400
+        except PermissionError as pe:
+            return jsonify({"error": f"Permission denied: {str(pe)}"}), 403
+        except Exception as e:
+            app.logger.error(f"Unhandled error: {str(e)}")
+            return jsonify({"error": "Internal server error"}), 500
+    
+    return wrapper
+```
 
-# Validazione path per prevenire directory traversal
-if ".." in file_path or file_path.startswith("/"):
-    return {"success": False, "error": "Path non sicuro"}
+### 6.3 Integrazione con GitHub Copilot
 
-# Cleanup automatico delle risorse
-def cleanup(self):
-    if self.auth_manager:
-        self.auth_manager.cleanup_local_clone()
-    self.is_initialized = False
+```yaml
+# File: copilot-extension.yml
+
+name: "GitHub Commands Extension"
+description: "Estensione per eseguire comandi pseudo-script su repository GitHub"
+version: "1.0.0"
+
+extension:
+  type: "agent"
+  
+endpoint:
+  url: "https://your-domain.com/api/copilot"
+  
+commands:
+  - name: "execute"
+    description: "Esegue una serie di comandi pseudo-script sul repository"
+    parameters:
+      - name: "commands"
+        type: "array" 
+        description: "Array di comandi da eseguire"
+        required: true
+
+permissions:
+  - "repository:read"
+  - "repository:write"
+  - "contents:read"
+  - "contents:write"
 ```
 
 ---
 
-## 🔄 9. WORKFLOW COMPLETO
+## 🔧 7. DEPLOYMENT E CONFIGURAZIONE
 
-### 9.1 Sequenza di Esecuzione Tipica
+### 7.1 Configurazione Environment
 
+```bash
+# File: .env
+
+# OAuth Credentials (da GitHub Developer Settings)
+GITHUB_CLIENT_ID=your_actual_client_id_here
+GITHUB_CLIENT_SECRET=your_actual_client_secret_here
+
+# Flask Configuration  
+FLASK_SECRET_KEY=your_secure_random_key_here
+FLASK_DEBUG=false
+
+# Server Configuration
+PORT=5000
+HOST=0.0.0.0
+
+# Logging
+LOG_LEVEL=INFO
+LOG_FILE=extension.log
 ```
-1. initialize(token, workspace_path)
-   ├── authenticate(token)
-   ├── detect_current_repository(workspace_path)
-   ├── check_repository_permissions()
-   ├── setup_local_clone()
-   └── create_managers(local_path)
 
-2. execute_commands(commands)
-   ├── validate_commands()
-   ├── sort_by_step()
-   └── for each command:
-       ├── validate_command()
-       ├── execute_single_command()
-       └── collect_result()
+### 7.2 Deploy su Heroku
 
-3. cleanup()
-   └── cleanup_local_clone()
+```bash
+# Procfile
+web: gunicorn copilot_api:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+
+# Commands per deploy
+heroku create github-commands-extension
+heroku config:set GITHUB_CLIENT_ID=xxx
+heroku config:set GITHUB_CLIENT_SECRET=xxx  
+heroku config:set FLASK_SECRET_KEY=xxx
+git push heroku main
 ```
 
-### 9.2 Esempio di Flusso Completo
+### 7.3 Monitoraggio e Logging
 
 ```python
-# Inizializzazione
-gateway = GitHubCopilotGateway()
-init_result = gateway.initialize("token", "/workspace")
+import logging
+from logging.handlers import RotatingFileHandler
 
-# Comandi di esempio
-commands = [
-    {"step": 1, "command": "create.file", "path": "src/new.py", "content": "base64_content"},
-    {"step": 2, "command": "commit", "content": "base64_commit_message"},
-    {"step": 3, "command": "push"}
-]
-
-# Esecuzione
-result = gateway.execute_commands(commands)
-
-# Cleanup
-gateway.cleanup()
+def setup_logging(app):
+    """
+    CONFIGURAZIONE LOGGING:
+    1. File rotation automatico (10MB max)
+    2. Formato strutturato con timestamp
+    3. Livelli separati (INFO, WARNING, ERROR)
+    4. Integrazione con monitoring tools
+    """
+    
+    if not app.debug:
+        file_handler = RotatingFileHandler('logs/extension.log', 
+                                         maxBytes=10240000, backupCount=10)
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+        ))
+        file_handler.setLevel(logging.INFO)
+        app.logger.addHandler(file_handler)
 ```
 
-Questa guida copre tutti gli aspetti tecnici dell'estensione, dal recupero del repository alla gestione delle operazioni, fornendo una comprensione completa del funzionamento interno del sistema.
+---
+
+## 🧪 8. TESTING E QUALITÀ DEL CODICE
+
+### 8.1 Test di Integrazione
+
+```python
+# File: test_extension.py
+
+def test_commands_with_oauth():
+    """
+    TEST COMPLETO DELL'ESTENSIONE:
+    1. Test autenticazione OAuth
+    2. Test ogni tipo di comando
+    3. Verifica gestione errori
+    4. Test cleanup risorse
+    """
+    
+    test_commands: list[CommandInput] = [
+        {"step": 1, "command": "read.file", "path": "README.md"},
+        {"step": 2, "command": "search.file", "content": base64.encode("README")},
+        {"step": 3, "command": "create.file", "path": "test.txt", "content": "..."},
+        {"step": 4, "command": "create.branch", "content": "feature/test"},
+        {"step": 5, "command": "commit", "content": "test commit"},
+        {"step": 6, "command": "push"}
+    ]
+```
+
+### 8.2 Metriche di Performance
+
+```python
+def performance_monitoring():
+    """
+    METRICHE MONITORATE:
+    1. Tempo di risposta per tipo comando
+    2. Utilizzo memoria durante clone repository
+    3. Throughput API requests
+    4. Tasso di successo/fallimento per comando
+    5. Latenza autenticazione OAuth
+    """
+    
+    @app.before_request
+    def before_request():
+        g.start_time = time.time()
+    
+    @app.after_request  
+    def after_request(response):
+        duration = time.time() - g.start_time
+        app.logger.info(f"Request completed in {duration:.3f}s")
+        return response
+```
+
+---
+
+## 🚀 9. OTTIMIZZAZIONI E BEST PRACTICES
+
+### 9.1 Gestione Memoria
+
+```python
+def optimize_clone_operations():
+    """
+    OTTIMIZZAZIONI CLONE:
+    1. Shallow clone per ridurre dimensioni
+    2. Sparse checkout per file specifici
+    3. Cleanup automatico repository temporanei
+    4. LRU cache per repository frequenti
+    """
+    
+    # Shallow clone con depth limitato
+    repo = Repo.clone_from(
+        url=clone_url,
+        to_path=local_path,
+        depth=1,  # Solo ultimo commit
+        single_branch=True  # Solo branch corrente
+    )
+```
+
+### 9.2 Sicurezza
+
+```python
+def security_measures():
+    """
+    MISURE DI SICUREZZA:
+    1. Sanitizzazione input per prevenire path traversal
+    2. Limitazione dimensione file operazioni
+    3. Rate limiting per API calls
+    4. Crittografia token in storage locale
+    5. Validazione strict per comandi critici
+    """
+    
+    def sanitize_path(file_path: str) -> str:
+        # Prevenzione path traversal
+        normalized = os.path.normpath(file_path)
+        if normalized.startswith('..') or os.path.isabs(normalized):
+            raise ValueError(f"Path non sicuro: {file_path}")
+        return normalized
+```
+
+---
+
+## 📊 10. TROUBLESHOOTING GUIDE
+
+### 10.1 Errori Comuni e Soluzioni
+
+| Errore | Causa | Soluzione |
+|--------|-------|-----------|
+| `OAuth not configured` | Credenziali mancanti in .env | Verifica GITHUB_CLIENT_ID/SECRET |
+| `Repository not found` | Directory senza .git | Esegui da directory Git valida |
+| `Permission denied` | Mancano permessi repository | Controlla OAuth App permissions |
+| `Command validation failed` | Sintassi comando errata | Verifica CommandType enum values |
+| `Clone failed` | Repository privato/inaccessibile | Verifica autenticazione e permessi |
+
+### 10.2 Debug Mode
+
+```python
+def enable_debug_mode():
+    """
+    MODALITÀ DEBUG:
+    1. Logging verboso di tutte le operazioni
+    2. Preservazione file temporanei per ispezione
+    3. Dump JSON di tutti i comandi processati
+    4. Traceback completi per errori
+    """
+    
+    if os.getenv('DEBUG', '').lower() == 'true':
+        logging.basicConfig(level=logging.DEBUG)
+        app.config['DEBUG'] = True
+        app.config['PRESERVE_TEMP_FILES'] = True
+```
+
+Questa guida tecnica completa documenta l'intera architettura dell'estensione GitHub Copilot, dalle funzionalità di base alle ottimizzazioni avanzate e alle procedure di deployment.

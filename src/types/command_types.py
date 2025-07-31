@@ -43,6 +43,16 @@ class GitHubCommand:
             except ValueError:
                 raise ValueError(f"Comando non valido: {self.command}")
 
+    @classmethod
+    def from_dict(cls, data: dict) -> 'GitHubCommand':
+        """Crea un GitHubCommand da un dizionario"""
+        return cls(
+            step=data.get('step', 0),
+            command=data.get('command', ''),
+            path=data.get('path'),
+            content=data.get('content')
+        )
+
     def validate(self) -> bool:
         """Valida la struttura del comando"""
         # Validazioni specifiche per comando

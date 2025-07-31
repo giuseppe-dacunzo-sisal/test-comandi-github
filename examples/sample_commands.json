@@ -1,0 +1,34 @@
+[
+  {
+    "step": 1,
+    "command": "create.file",
+    "path": "test/example.py",
+    "content": "IyBGaWxlIGRpIGVzZW1waW8KcHJpbnQoIkhlbGxvLCBXb3JsZCEiKQ=="
+  },
+  {
+    "step": 2,
+    "command": "search.file",
+    "content": "name:*.py"
+  },
+  {
+    "step": 3,
+    "command": "read.file",
+    "path": "test/example.py"
+  },
+  {
+    "step": 4,
+    "command": "modify.file",
+    "path": "test/example.py (append)",
+    "content": "CnByaW50KCJBcHBlbmRlZCBsaW5lISIp"
+  },
+  {
+    "step": 5,
+    "command": "commit",
+    "content": "QWdnaXVudG8gZmlsZSBkaSBlc2VtcGlv"
+  },
+  {
+    "step": 6,
+    "command": "push"
+  }
+]
+

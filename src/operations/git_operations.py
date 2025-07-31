@@ -6,10 +6,11 @@ from github import Github
 class GitOperationsManager:
     """Gestore per le operazioni Git"""
 
-    def __init__(self, local_repo_path: str, github_client: Github, repo_info: Dict[str, str]):
+    def __init__(self, local_repo_path: str, github_client: Github, repo_info: Dict[str, str], access_token: str = None):
         self.local_repo_path = local_repo_path
         self.github_client = github_client
         self.repo_info = repo_info
+        self.access_token = access_token  # Token OAuth passato direttamente
         self.git_repo = Repo(local_repo_path)
 
     def pull(self) -> Dict[str, Any]:
@@ -89,7 +90,7 @@ class GitOperationsManager:
 
     def push(self, branch: str = None) -> Dict[str, Any]:
         """
-        Esegue push verso il repository remoto
+        Esegue push verso il repository remoto con gestione automatica dell'upstream
 
         Args:
             branch: Branch da pushare (default: current branch)
@@ -100,23 +101,113 @@ class GitOperationsManager:
         try:
             origin = self.git_repo.remotes.origin
 
-            if branch:
-                push_info = origin.push(f"refs/heads/{branch}")
+            # Determina il branch corrente se non specificato
+            if not branch:
+                current_branch = self.git_repo.active_branch
+                branch_name = current_branch.name
             else:
-                push_info = origin.push()
+                branch_name = branch
+                current_branch = self.git_repo.heads[branch_name]
 
-            return {
-                "success": True,
-                "message": "Push completata con successo",
-                "pushed_refs": len(push_info)
-            }
+            # Configura le credenziali Git usando il token OAuth
+            try:
+                # Ottieni il token dall'oggetto GitHub
+                access_token = self.access_token
+                if access_token:
+                    # Configura Git per usare il token come username con password vuota
+                    with self.git_repo.git.custom_environment(
+                        GIT_USERNAME=access_token,
+                        GIT_PASSWORD='',
+                        GIT_ASKPASS='echo',
+                        GIT_TERMINAL_PROMPT='0'
+                    ):
+                        # Configura temporaneamente le credenziali
+                        original_url = origin.url
+
+                        if original_url.startswith('https://github.com/'):
+                            # Modifica l'URL per includere il token
+                            authenticated_url = original_url.replace(
+                                'https://github.com/',
+                                f'https://{access_token}:x-oauth-basic@github.com/'
+                            )
+
+                            # Aggiorna l'URL del remote temporaneamente
+                            origin.set_url(authenticated_url)
+
+                            try:
+                                # Controlla se il branch ha già un upstream configurato
+                                tracking_branch = current_branch.tracking_branch()
+
+                                if tracking_branch is None:
+                                    # Il branch non ha upstream - prima push, imposta upstream
+                                    print(f"🔗 Primo push del branch '{branch_name}' con autenticazione OAuth...")
+                                    push_info = origin.push(f"refs/heads/{branch_name}:refs/heads/{branch_name}", set_upstream=True)
+
+                                    result = {
+                                        "success": True,
+                                        "message": f"Branch '{branch_name}' pushato e upstream configurato con successo",
+                                        "branch": branch_name,
+                                        "upstream_set": True,
+                                        "pushed_refs": len(push_info)
+                                    }
+                                else:
+                                    # Il branch ha già upstream - push normale
+                                    print(f"📤 Push del branch '{branch_name}' con autenticazione OAuth...")
+                                    push_info = origin.push()
+
+                                    result = {
+                                        "success": True,
+                                        "message": f"Push del branch '{branch_name}' completata con successo",
+                                        "branch": branch_name,
+                                        "upstream_set": False,
+                                        "pushed_refs": len(push_info)
+                                    }
+                            finally:
+                                # Ripristina sempre l'URL originale
+                                origin.set_url(original_url)
+
+                        return result
+                else:
+                    return {
+                        "success": False,
+                        "error": "Token OAuth non disponibile",
+                        "message": "Impossibile ottenere il token OAuth per l'autenticazione"
+                    }
+
+            except Exception as auth_error:
+                return {
+                    "success": False,
+                    "error": str(auth_error),
+                    "message": f"Errore nella configurazione dell'autenticazione OAuth: {str(auth_error)}"
+                }
 
         except GitCommandError as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "message": f"Errore durante la push: {str(e)}"
-            }
+            # Gestione specifica per errori di upstream
+            if "has no upstream branch" in str(e):
+                try:
+                    # Retry con set_upstream se il primo tentativo fallisce
+                    print(f"🔄 Retry push con configurazione upstream per '{branch_name}'...")
+                    push_info = origin.push(f"refs/heads/{branch_name}:refs/heads/{branch_name}", set_upstream=True)
+
+                    return {
+                        "success": True,
+                        "message": f"Branch '{branch_name}' pushato con upstream configurato (retry)",
+                        "branch": branch_name,
+                        "upstream_set": True,
+                        "pushed_refs": len(push_info)
+                    }
+                except Exception as retry_error:
+                    return {
+                        "success": False,
+                        "error": str(retry_error),
+                        "message": f"Errore durante il retry push con upstream: {str(retry_error)}"
+                    }
+            else:
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "message": f"Errore durante la push: {str(e)}"
+                }
         except Exception as e:
             return {
                 "success": False,
@@ -146,10 +237,14 @@ class GitOperationsManager:
             # Crea il nuovo branch
             new_branch = self.git_repo.create_head(branch_name)
 
+            # Fai automaticamente il checkout del nuovo branch
+            new_branch.checkout()
+
             return {
                 "success": True,
-                "message": f"Branch '{branch_name}' creato con successo",
-                "branch_name": branch_name
+                "message": f"Branch '{branch_name}' creato e attivato con successo",
+                "branch_name": branch_name,
+                "current_branch": branch_name
             }
 
         except GitCommandError as e:

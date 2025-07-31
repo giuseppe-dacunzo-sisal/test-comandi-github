@@ -339,7 +339,33 @@ class GitHubAuthManager:
         try:
             print(f"📥 Clono repository in: {temp_clone_path}")
             # Clona il repository
-            Repo.clone_from(repo_url, temp_clone_path)
+            cloned_repo = Repo.clone_from(repo_url, temp_clone_path)
+
+            # Copia la configurazione Git locale dal repository originale
+            if workspace_path and os.path.exists(workspace_path):
+                try:
+                    original_repo = Repo(workspace_path)
+                    original_config = original_repo.config_reader()
+
+                    # Leggi la configurazione utente dal repository originale
+                    try:
+                        original_name = original_config.get_value("user", "name")
+                        original_email = original_config.get_value("user", "email")
+
+                        # Configura l'identità nel repository clonato
+                        cloned_config = cloned_repo.config_writer()
+                        cloned_config.set_value("user", "name", original_name)
+                        cloned_config.set_value("user", "email", original_email)
+                        cloned_config.release()  # Salva la configurazione
+
+                        print(f"👤 Configurata identità Git: {original_name} <{original_email}>")
+
+                    except Exception as e:
+                        print(f"⚠️ Impossibile copiare configurazione utente: {e}")
+
+                except Exception as e:
+                    print(f"⚠️ Impossibile leggere configurazione originale: {e}")
+
             self.local_repo_path = temp_clone_path
             return temp_clone_path
         except Exception as e:

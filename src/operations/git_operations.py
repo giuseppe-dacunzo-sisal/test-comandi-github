@@ -45,7 +45,7 @@ class GitOperationsManager:
 
     def commit(self, message: str) -> Dict[str, Any]:
         """
-        Esegue commit delle modifiche
+        Esegue commit delle modifiche con l'identità corretta del repository
 
         Args:
             message: Messaggio di commit
@@ -65,14 +65,43 @@ class GitOperationsManager:
                     "commit_hash": None
                 }
 
-            # Esegui il commit
-            commit = self.git_repo.index.commit(message)
+            # Configura l'identità Git per questo repository
+            try:
+                # Leggi la configurazione locale del repository
+                config_reader = self.git_repo.config_reader()
+
+                # Prova a ottenere user.name e user.email dalla configurazione locale
+                try:
+                    local_name = config_reader.get_value("user", "name")
+                    local_email = config_reader.get_value("user", "email")
+                    print(f"📝 Usando identità locale: {local_name} <{local_email}>")
+
+                    # Configura l'identità per questo commit
+                    with self.git_repo.git.custom_environment(
+                        GIT_AUTHOR_NAME=local_name,
+                        GIT_AUTHOR_EMAIL=local_email,
+                        GIT_COMMITTER_NAME=local_name,
+                        GIT_COMMITTER_EMAIL=local_email
+                    ):
+                        # Esegui il commit con l'identità configurata
+                        commit = self.git_repo.index.commit(message)
+
+                except Exception:
+                    # Se non c'è configurazione locale, usa quella globale con warning
+                    print("⚠️ Nessuna configurazione utente locale trovata, usando configurazione globale")
+                    commit = self.git_repo.index.commit(message)
+
+            except Exception as config_error:
+                print(f"⚠️ Errore nella lettura configurazione: {config_error}")
+                # Fallback: commit normale
+                commit = self.git_repo.index.commit(message)
 
             return {
                 "success": True,
                 "message": f"Commit creato: {commit.hexsha[:8]}",
                 "commit_hash": commit.hexsha,
-                "commit_message": message
+                "commit_message": message,
+                "author": f"{commit.author.name} <{commit.author.email}>"
             }
 
         except GitCommandError as e:

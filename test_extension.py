@@ -55,6 +55,17 @@ def test_commands_with_oauth():
     current_dir = os.getcwd()
     print(f"📁 Directory corrente: {current_dir}")
 
+    # Pulizia dei repository temporanei esistenti
+    temp_repos_dir = os.path.join(current_dir, "temp_repos")
+    if os.path.exists(temp_repos_dir):
+        import shutil
+        print(f"🧹 Pulisco directory temporanei esistenti: {temp_repos_dir}")
+        try:
+            shutil.rmtree(temp_repos_dir)
+            print("✅ Directory temporanei rimossi con successo")
+        except Exception as e:
+            print(f"⚠️ Errore nella pulizia: {e}")
+
     # Comandi di esempio che testano il nuovo flusso
     test_commands = [
         {

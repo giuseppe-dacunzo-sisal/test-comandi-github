@@ -1,268 +1,292 @@
-# GitHub Copilot Extension - Pseudo Script Commands
+# GitHub Copilot Extension - Automazione Comandi GitHub
 
-Un'estensione avanzata di GitHub Copilot che converte comandi pseudo script in operazioni reali su repository GitHub, con autenticazione OAuth automatica e interfacce tipizzate per client esterni.
+Un'estensione GitHub App pubblica che permette di automatizzare operazioni Git e GitHub attraverso comandi pseudo-script, utilizzabile direttamente da GitHub Copilot su qualsiasi repository.
 
 ## 🚀 Caratteristiche Principali
 
-- **🔐 Autenticazione OAuth Automatica**: Sistema di autenticazione trasparente che si attiva al primo utilizzo
-- **📝 Interfacce Tipizzate**: API completamente tipizzata con validazione rigorosa dei comandi
-- **🌐 API REST per GitHub Copilot**: Server Flask integrato per l'uso come estensione `@` in GitHub Copilot
-- **🔍 Ricerca Avanzata**: Ricerca file per nome, estensione o contenuto con pattern intelligenti
-- **📂 Gestione File Completa**: Creazione, lettura, modifica, eliminazione con supporto encoding UTF-8
-- **🌳 Operazioni Git Complete**: Branch, commit, push con gestione automatica upstream
-- **🧹 Clone Temporaneo Intelligente**: Gestione automatica di repository locali con pulizia preventiva
-- **✅ Validazione Robusta**: Controllo di integrità multilivello per tutti i comandi
-- **🔄 Gestione Errori Avanzata**: Messaggi di errore dettagliati e recovery automatico
+- **GitHub App Pubblica**: Installabile su qualsiasi repository GitHub
+- **Autenticazione Device Flow**: Autenticazione sicura senza token pre-configurati
+- **Multi-Repository**: Gestisce sessioni multiple per utenti e repository diversi
+- **Rilevamento Automatico**: Rileva automaticamente il repository dal contesto GitHub Copilot
+- **Configurazione Git Automatica**: Configura automaticamente nome e email dall'utente GitHub
+- **Deploy Cloud**: Pronta per deployment su Heroku, AWS, Azure
+- **Modalità Standalone**: Utilizzabile anche come applicazione indipendente per test
 
-## 📋 Comandi Supportati
-
-### **File Operations**
-
-| Comando | Descrizione | Parametri | Esempio |
-|---------|-------------|-----------|---------|
-| `create.file` | Crea un file con contenuto | `path`, `content` (base64) | Crea file con cartelle automatiche |
-| `read.file` | Legge il contenuto di un file | `path` | Restituisce contenuto completo |
-| `modify.file` | Modifica un file esistente | `path`, `content` (base64) | Supporta `append:` e `replace:` |
-| `delete.file` | Elimina un file | `path` | Rimozione sicura |
-
-### **Ricerca Avanzata**
-
-| Comando | Tipo | Parametri | Descrizione |
-|---------|------|-----------|-------------|
-| `search.file` | Per nome (default) | `content`: `"nome_file"` | Ricerca nel nome del file |
-| `search.file` | Per estensione | `content`: `"ext:.py"` | Ricerca per estensione |
-| `search.file` | Nel contenuto | `content`: `"content:import os"` | Ricerca nel contenuto dei file |
-
-### **Git Operations**
-
-| Comando | Descrizione | Parametri | Note |
-|---------|-------------|-----------|------|
-| `pull` | Esegue pull dal repository remoto | - | Sincronizza automaticamente |
-| `commit` | Crea un commit | `content` (messaggio, base64) | Con autore configurato |
-| `push` | Esegue push verso il repository remoto | - | Gestione automatica upstream |
-| `create.branch` | Crea un nuovo branch | `content` (nome, base64) | Branch locale + remoto |
-| `switch.branch` | Cambia branch corrente | `content` (nome, base64) | Switch sicuro |
-| `clone` | Clona il repository localmente | - | Auto-eseguito all'inizializzazione |
-
-## 🏗️ Architettura del Progetto
+## 🏗️ Architettura
 
 ```
-├── README.md                           # Documentazione principale
-├── requirements.txt                    # Dipendenze Python
-├── test_extension.py                   # Test completo con OAuth
-├── copilot_api.py                      # 🆕 API Server per GitHub Copilot
-├── copilot-extension.yml               # 🆕 Configurazione estensione
-├── Procfile                            # 🆕 Deploy configuration
-├── .env                                # Credenziali OAuth (non in git)
-├── docs/
-│   └── TECHNICAL_GUIDE.md             # Guida tecnica dettagliata
-├── examples/
-│   └── sample_commands.json          # Esempi di comandi
-├── src/
-│   ├── gateway.py                     # 🔄 Gateway principale con interfacce tipizzate
-│   ├── main.py                        # Entry point dell'estensione
-│   ├── auth/
-│   │   └── github_auth.py             # 🔄 Autenticazione OAuth automatica
-│   ├── operations/
-│   │   ├── file_operations.py         # 🔄 Operazioni file complete
-│   │   └── git_operations.py          # 🔄 Operazioni Git avanzate
-│   └── types/
-│       ├── command_types.py           # 🔄 Enum e validazione avanzata
-│       ├── validator.py               # 🔄 Validazione multilivello
-│       └── gateway_interfaces.py      # 🆕 Interfacce tipizzate per client esterni
-└── temp_repos/                        # Directory clone temporanei (auto-gestita)
+src/
+├── main.py                    # Entry point principale
+├── config.py                  # Configurazione per deployment
+├── gateway.py                 # Gateway per processamento comandi
+├── auth/
+│   ├── device_flow_auth.py    # Autenticazione Device Flow
+│   └── github_app.py          # GitHub App pubblica con webhook
+├── operations/
+│   ├── file_operations.py     # Operazioni sui file
+│   └── git_operations.py      # Operazioni Git
+└── types/
+    ├── command_types.py       # Enum e tipi dei comandi
+    ├── interfaces.py          # Interfacce per API
+    └── validator.py           # Validazione comandi
 ```
 
 ## 📦 Installazione e Setup
 
-### **1. Installazione Locale**
+### Prerequisiti
+- Python 3.11+
+- Git installato
+- Account GitHub
+- Heroku CLI (per deployment)
 
+### Setup Locale per Sviluppo
+
+1. **Clona il repository**
 ```bash
-# 1. Clona il repository
 git clone https://github.com/giuseppe-dacunzo-sisal/test-comandi-github.git
 cd test-comandi-github
+```
 
-# 2. Crea ambiente virtuale
+2. **Crea ambiente virtuale**
+```bash
 python -m venv .venv
 
-# 3. Attiva ambiente (Windows)
+# Windows
 .venv\Scripts\activate
 
-# 4. Installa dipendenze
+# Linux/Mac
+source .venv/bin/activate
+```
+
+3. **Installa dipendenze**
+```bash
 pip install -r requirements.txt
-
-# 5. Configura OAuth (vedi sezione OAuth Setup)
-cp .env.example .env
-# Modifica .env con le tue credenziali
 ```
 
-### **2. Configurazione OAuth**
+## 🚀 Deploy GitHub App Pubblica
 
-1. **Crea GitHub OAuth App**:
-   - Vai su https://github.com/settings/developers
-   - Clicca "New OAuth App"
-   - **Application name**: `GitHub Commands Extension`
-   - **Homepage URL**: `https://github.com/your-username/your-repo`
-   - **Authorization callback URL**: `http://localhost:8080/callback`
+### Passo 1: Registra GitHub App
 
-2. **Configura credenziali nel file `.env`**:
-   ```env
-   GITHUB_CLIENT_ID=your_actual_client_id_here
-   GITHUB_CLIENT_SECRET=your_actual_client_secret_here
-   FLASK_SECRET_KEY=your_secure_random_key_here
-   ```
+1. Vai su **https://github.com/settings/apps**
+2. Clicca **"New GitHub App"**
+3. Configura come indicato in `docs/GITHUB_APP_SETUP.md`
 
-## 🧪 Test e Utilizzo
-
-### **Test Locale**
+### Passo 2: Deploy su Heroku
 
 ```bash
-# Test completo con OAuth
-python test_extension.py
+# Crea app Heroku
+heroku create your-github-copilot-extension
 
-# Test API server
-python copilot_api.py
-```
-
-### **Utilizzo come Libreria**
-
-```python
-from src.gateway import GitHubGateway
-from src.types.gateway_interfaces import CommandInput, GatewayResponse
-
-# Inizializza gateway
-gateway = GitHubGateway()
-
-# Definisci comandi tipizzati
-commands: list[CommandInput] = [
-    {
-        "step": 1,
-        "command": "create.file",
-        "path": "test.txt",
-        "content": base64.b64encode("Hello World!".encode()).decode()
-    },
-    {
-        "step": 2,
-        "command": "search.file",
-        "content": base64.b64encode("README".encode()).decode()
-    }
-]
-
-# Esegui comandi
-result: GatewayResponse = gateway.process_commands(commands)
-print(f"Successo: {result['success']}")
-```
-
-### **Utilizzo come API REST**
-
-```bash
-# Avvia server API
-python copilot_api.py
-
-# Test con curl
-curl -X POST http://localhost:5000/api/copilot/execute \
-  -H "Content-Type: application/json" \
-  -d '{
-    "commands": [
-      {
-        "step": 1,
-        "command": "create.file",
-        "path": "api-test.txt",
-        "content": "SGVsbG8gZnJvbSBBUEkh"
-      }
-    ]
-  }'
-```
-
-## 🔧 Deploy come GitHub Copilot Extension
-
-### **1. Deploy su Heroku**
-
-```bash
-# Installa Heroku CLI e login
-heroku login
-
-# Crea app
-heroku create github-commands-extension
-
-# Configura variabili d'ambiente
+# Configura variabili ambiente
 heroku config:set GITHUB_CLIENT_ID=your_client_id
 heroku config:set GITHUB_CLIENT_SECRET=your_client_secret
-heroku config:set FLASK_SECRET_KEY=your_secret_key
+heroku config:set GITHUB_WEBHOOK_SECRET=your_webhook_secret
+heroku config:set SECRET_KEY=your_flask_secret
+heroku config:set FLASK_ENV=production
 
 # Deploy
-git add .
-git commit -m "Deploy GitHub Copilot Extension"
 git push heroku main
 ```
 
-### **2. Registrazione in GitHub Marketplace**
+### Passo 3: Configura Webhook
 
-1. Vai su https://github.com/marketplace/manage
-2. Crea nuova GitHub App con:
-   - **Webhook URL**: `https://your-app.herokuapp.com/api/copilot/execute`
-   - **Permissions**: Repository Read/Write per Contents e Metadata
-
-### **3. Utilizzo in GitHub Copilot**
-
+Aggiorna la GitHub App con:
 ```
-@github-commands execute create.file "test.py" with content "print('Hello from Copilot!')"
-@github-commands search files containing "import os"
-@github-commands create branch "feature/new-feature"
+Webhook URL: https://your-app.herokuapp.com/webhook
 ```
 
-## 🎯 Funzionalità Avanzate
+## 🔧 Utilizzo
 
-### **Convenzioni per Tipi di Operazione**
+### Modalità GitHub App (Produzione)
 
-- **Ricerca**: `"README"` (nome), `"ext:.py"` (estensione), `"content:import"` (contenuto)
-- **Modifica**: `"replace:nuovo_contenuto"` (sostituisce), `"append:\nnuova_riga"` (aggiunge)
+Una volta deployata e installata su un repository, l'app è utilizzabile tramite GitHub Copilot:
 
-### **Gestione Automatica Repository**
+```
+@github-copilot-commands esegui questi comandi:
+[
+  {
+    "step": 1,
+    "command": "create.file",
+    "path": "src/nuovo.py", 
+    "content": "cHJpbnQoIkhlbGxvIFdvcmxkIik="
+  }
+]
+```
 
-- **Auto-rilevamento**: Repository corrente da `.git`
-- **Clone temporaneo**: In `./temp_repos/` con pulizia automatica
-- **Sincronizzazione**: Pull automatico prima delle operazioni
+### Modalità Standalone (Sviluppo/Test)
 
-### **Validazione Multilivello**
-
-- **Struttura comandi**: Validazione di tipo e formato
-- **Parametri richiesti**: Controllo campi obbligatori per comando
-- **Permessi repository**: Verifica accesso lettura/scrittura
-- **Integrità file**: Controllo esistenza e encoding
-
-## 🔍 Troubleshooting
-
-### **Errori Comuni**
-
-1. **"OAuth non configurato"**: Verifica credenziali in `.env`
-2. **"Repository non trovato"**: Esegui da directory con `.git`
-3. **"Permission denied"**: Verifica permessi GitHub OAuth App
-4. **"Command validation failed"**: Controlla sintassi comandi
-
-### **Debug Mode**
-
+#### Test Autenticazione
 ```bash
-# Abilita debug dettagliato
-export FLASK_DEBUG=true
-python copilot_api.py
+python copilot_extension.py auth
 ```
+
+#### Esecuzione da File
+```bash
+python copilot_extension.py run --file examples/sample_commands.json
+```
+
+#### Modalità Interattiva
+```bash
+python copilot_extension.py run --interactive
+```
+
+#### Avvio Server Locale per Test
+```bash
+python copilot_extension.py app --port 3000
+```
+
+## 📝 Comandi Supportati
+
+### File Operations
+- `create.file path/filename contenuto` - Crea file con contenuto
+- `read.file path/filename` - Legge contenuto file
+- `modify.file path/filename contenuto` - Modifica file
+- `modify.file path/filename (append) contenuto` - Aggiunge contenuto
+- `delete.file path/filename` - Elimina file
+- `search.file name:filename` - Cerca per nome
+- `search.file ext:.py` - Cerca per estensione
+- `search.file content:testo` - Cerca per contenuto
+
+### Git Operations
+- `pull` - Pull del repository
+- `commit -m "messaggio"` - Commit con messaggio
+- `push` - Push al repository remoto
+- `create.branch nome-branch` - Crea nuovo branch
+- `switch.branch nome-branch` - Cambia branch
+- `clone` - Clona repository (automatico in GitHub App)
+
+## 🔗 Formato Comandi JSON
+
+```json
+[
+  {
+    "step": 1,
+    "command": "create.file",
+    "path": "src/nuovo_file.py",
+    "content": "cHJpbnQoIkhlbGxvIFdvcmxkIik="
+  },
+  {
+    "step": 2,
+    "command": "commit", 
+    "content": "QWdnaXVudG8gbnVvdm8gZmlsZQ=="
+  },
+  {
+    "step": 3,
+    "command": "push"
+  }
+]
+```
+
+**Note:**
+- `content` deve essere codificato in Base64
+- `path` è opzionale per alcuni comandi (pull, push, clone)
+- `content` è opzionale per comandi senza payload
+
+## 🌐 API Endpoints (GitHub App)
+
+La GitHub App espone questi endpoint REST:
+
+```
+POST /auth/start
+Body: {"repo_owner": "user", "repo_name": "repo", "user_id": "123"}
+- Avvia autenticazione device flow per repository specifico
+
+GET /auth/status/{session_id}
+- Controlla stato autenticazione
+
+POST /commands/execute  
+Body: {"repo_owner": "user", "repo_name": "repo", "user_id": "123", "commands": [...]}
+- Esegue comandi per repository autenticato
+
+POST /webhook
+- Gestisce eventi GitHub (installazione, repository)
+
+GET /health
+- Health check dell'applicazione
+```
+
+## 🔐 Sicurezza e Autenticazione
+
+### Device Flow Authentication
+1. **Avvio**: L'app genera device code e user code
+2. **Autorizzazione**: L'utente va su GitHub e inserisce il codice
+3. **Polling**: L'app attende l'autorizzazione
+4. **Token**: Riceve access token e configura client GitHub
+
+### Multi-Tenancy
+- Ogni utente/repository ha sessione indipendente
+- Gestione automatica scadenze sessioni
+- Cleanup automatico risorse
+
+## 📊 Monitoraggio
+
+### Logs Heroku
+```bash
+heroku logs --tail -a your-app-name
+```
+
+### Metriche
+```bash
+heroku ps -a your-app-name
+heroku releases -a your-app-name
+```
+
+## 🔍 Esempi Avanzati
+
+### Workflow Completo Feature Branch
+```json
+[
+  {"step": 1, "command": "create.branch", "path": "feature/new-api"},
+  {"step": 2, "command": "switch.branch", "path": "feature/new-api"},
+  {"step": 3, "command": "create.file", "path": "api/endpoint.py", "content": "..."},
+  {"step": 4, "command": "commit", "content": "QWdnaXVudG8gQVBJ"},
+  {"step": 5, "command": "push"}
+]
+```
+
+### Refactoring Multipli File
+```json
+[
+  {"step": 1, "command": "modify.file", "path": "src/main.py", "content": "..."},
+  {"step": 2, "command": "modify.file", "path": "src/utils.py", "content": "..."},
+  {"step": 3, "command": "delete.file", "path": "src/deprecated.py"},
+  {"step": 4, "command": "commit", "content": "UmVmYWN0b3Jpbmc="},
+  {"step": 5, "command": "push"}
+]
+```
+
+## 🚨 Risoluzione Problemi
+
+### Errore Device Flow
+- Verifica che Device Flow sia abilitato nella GitHub App
+- Controlla `GITHUB_CLIENT_ID` nelle variabili ambiente
+
+### Errore Permissions
+- Verifica che l'app sia installata sul repository
+- Controlla permissions nella configurazione GitHub App
+
+### Errore Webhook
+- Verifica `GITHUB_WEBHOOK_SECRET` nelle variabili ambiente
+- Controlla che l'URL webhook sia raggiungibile
+
+## 📄 Documentazione Aggiuntiva
+
+- `docs/GITHUB_APP_SETUP.md` - Guida dettagliata setup GitHub App
+- `docs/TECHNICAL_GUIDE.md` - Guida tecnica architettura
+- `examples/sample_commands.json` - Esempi comandi
 
 ## 🤝 Contribuire
 
 1. Fork del repository
-2. Crea branch per feature: `git checkout -b feature/nome-feature`
-3. Commit delle modifiche: `git commit -m 'Add: nuova feature'`
-4. Push del branch: `git push origin feature/nome-feature`
+2. Crea feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit modifiche (`git commit -m 'Add amazing feature'`)
+4. Push al branch (`git push origin feature/amazing-feature`)
 5. Apri Pull Request
 
 ## 📄 Licenza
 
-Questo progetto è licenziato sotto MIT License - vedi il file [LICENSE](LICENSE) per i dettagli.
+Progetto rilasciato sotto licenza MIT. Vedi `LICENSE` per dettagli.
 
-## 🔗 Link Utili
+## 📞 Supporto
 
-- **Repository**: https://github.com/giuseppe-dacunzo-sisal/test-comandi-github
-- **Issues**: https://github.com/giuseppe-dacunzo-sisal/test-comandi-github/issues
-- **GitHub Copilot Extensions**: https://docs.github.com/en/copilot/building-copilot-extensions
-- **OAuth Apps**: https://docs.github.com/en/developers/apps/building-oauth-apps
+Per supporto e bug reports, apri un issue su GitHub o contatta il team di sviluppo.

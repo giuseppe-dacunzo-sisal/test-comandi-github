@@ -1,24 +1,28 @@
 import base64
 import os
 import tempfile
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from src.types.interfaces import GatewayResponse, ProcessedStep
 from src.types.command_types import GitHubCommand, CommandType, SearchType, ModifyType
-from src.auth.github_auth import GitHubAuthManager
+from src.types.validator import CommandValidator
+from src.auth.device_flow_auth import GitHubDeviceFlowAuth
 from src.operations.file_operations import FileOperationsManager
 from src.operations.git_operations import GitOperationsManager
 
 class GitHubGateway:
-    """Gateway principale per l'estensione GitHub Copilot con OAuth automatico"""
+    """Gateway principale per l'estensione GitHub Copilot con Device Flow Authentication"""
 
-    def __init__(self):
-        self.auth_manager = GitHubAuthManager()
+    def __init__(self, workspace_path: Optional[str] = None):
+        self.auth_manager = GitHubDeviceFlowAuth()
         self.file_manager = None
         self.git_manager = None
         self.is_initialized = False
+        self.workspace_path = workspace_path or os.getcwd()
+        self.validator = CommandValidator()
 
     def _ensure_authenticated(self) -> Dict[str, Any]:
         """
-        Assicura che l'utente sia autenticato, avviando OAuth se necessario
+        Assicura che l'utente sia autenticato, gestendo il device flow se necessario
 
         Returns:
             Dict con risultato dell'autenticazione
@@ -26,192 +30,248 @@ class GitHubGateway:
         if self.auth_manager.is_authenticated():
             return {"success": True, "message": "Già autenticato"}
 
-        # Avvia il flusso OAuth automatico
-        oauth_result = self.auth_manager.start_oauth_flow()
-        if not oauth_result["success"]:
-            return oauth_result
+        print("🔐 Avvio autenticazione GitHub Device Flow...")
 
-        # Attende che l'utente completi l'autorizzazione
-        print("⏳ In attesa dell'autorizzazione utente...")
-        import time
-        max_wait = 120  # 2 minuti di timeout
-        waited = 0
-
-        while not self.auth_manager.is_authenticated() and waited < max_wait:
-            time.sleep(1)
-            waited += 1
-
-        if self.auth_manager.is_authenticated():
-            return {"success": True, "message": "Autenticazione OAuth completata"}
+        # Rileva repository dal workspace corrente
+        repo_result = self.auth_manager.get_repository_from_context(self.workspace_path)
+        if repo_result["success"]:
+            print(f"📁 Repository rilevato: {repo_result['repository']['full_name']}")
         else:
-            return {"success": False, "error": "Timeout nell'autenticazione OAuth"}
+            print(f"⚠️ Warning: {repo_result['error']}")
 
-    def _initialize_workspace(self, workspace_path: str = None) -> Dict[str, Any]:
+        # Avvia device flow
+        device_result = self.auth_manager.start_device_flow()
+        if not device_result["success"]:
+            return device_result
+
+        print(f"📱 {device_result['message']}")
+        print("⏳ In attesa dell'autorizzazione utente...")
+
+        # Polling per il token
+        token_result = self.auth_manager.poll_for_token(
+            device_result["device_code"],
+            device_result["interval"]
+        )
+
+        if token_result["success"]:
+            print(f"✅ Autenticazione completata! Benvenuto, {token_result['user']['name']}")
+
+            # Setup del repository locale se rilevato
+            if repo_result["success"]:
+                try:
+                    local_path = self.auth_manager.setup_local_clone(self.workspace_path)
+                    print(f"📂 Repository clonato localmente: {local_path}")
+                except Exception as e:
+                    print(f"⚠️ Warning: Errore nel setup clone locale: {str(e)}")
+
+            return token_result
+        else:
+            return token_result
+
+    def _initialize_workspace(self) -> Dict[str, Any]:
         """
-        Inizializza il workspace e rileva il repository
-
-        Args:
-            workspace_path: Path del workspace (usa la directory corrente se None)
+        Inizializza il workspace e i manager per le operazioni
 
         Returns:
             Dict con risultato dell'inizializzazione
         """
-        if workspace_path is None:
-            workspace_path = os.getcwd()
-
-        # Rileva il repository corrente
-        repo_result = self.auth_manager.detect_current_repository(workspace_path)
-        if not repo_result["success"]:
-            return repo_result
-
-        # Verifica i permessi
-        perm_result = self.auth_manager.check_repository_permissions()
-        if not perm_result["success"]:
-            return perm_result
-
-        # Configura il clone locale
         try:
-            local_path = self.auth_manager.setup_local_clone(workspace_path)
+            if self.is_initialized:
+                return {"success": True, "message": "Workspace già inizializzato"}
+
+            # Verifica autenticazione
+            auth_result = self._ensure_authenticated()
+            if not auth_result["success"]:
+                return auth_result
+
+            # Verifica repository e permessi
+            repo_info = self.auth_manager.get_current_repo_info()
+            if not repo_info:
+                return {
+                    "success": False,
+                    "error": "Nessun repository GitHub rilevato nel workspace corrente"
+                }
+
+            permissions_result = self.auth_manager.check_repository_permissions()
+            if not permissions_result["success"]:
+                return {
+                    "success": False,
+                    "error": f"Errore verifica permessi: {permissions_result['error']}"
+                }
+
+            if not permissions_result["permissions"]["write"]:
+                return {
+                    "success": False,
+                    "error": "Permessi di scrittura insufficienti sul repository"
+                }
+
+            # Usa il clone locale se disponibile, altrimenti il workspace corrente
+            base_path = self.auth_manager.local_repo_path or self.workspace_path
 
             # Inizializza i manager
-            self.file_manager = FileOperationsManager(local_path)
-            self.git_manager = GitOperationsManager(
-                local_repo_path=local_path,
+            self.file_manager = FileOperationsManager(
                 github_client=self.auth_manager.get_github_client(),
-                repo_info=self.auth_manager.get_current_repo_info(),
-                access_token=self.auth_manager.access_token  # Passa il token direttamente
+                repo_info=repo_info,
+                base_path=base_path
+            )
+
+            self.git_manager = GitOperationsManager(
+                github_client=self.auth_manager.get_github_client(),
+                repo_info=repo_info,
+                base_path=base_path,
+                auth_token=self.auth_manager.access_token
             )
 
             self.is_initialized = True
 
             return {
                 "success": True,
-                "message": f"Workspace inizializzato per {repo_result['repository']['full_name']}",
-                "repository": repo_result['repository'],
-                "local_path": local_path
+                "message": "Workspace inizializzato",
+                "repository": repo_info,
+                "permissions": permissions_result["permissions"],
+                "user": self.auth_manager.get_user_info(),
+                "base_path": base_path
             }
 
         except Exception as e:
             return {
                 "success": False,
-                "error": str(e),
-                "message": f"Errore nell'inizializzazione del workspace: {str(e)}"
+                "error": f"Errore nell'inizializzazione workspace: {str(e)}"
             }
 
-    def process_commands(self, commands: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    def process_commands(self, commands: List[Dict[str, Any]]) -> GatewayResponse:
         """
-        Processa una lista di comandi con autenticazione automatica
+        Processa una lista di comandi GitHub
 
         Args:
             commands: Lista di comandi da processare
 
         Returns:
-            Dict con risultati indicizzati per step
+            GatewayResponse con risultati dell'elaborazione
         """
-        results = {}
-
         try:
-            # Step 1: Assicura autenticazione automatica
-            auth_result = self._ensure_authenticated()
-            if not auth_result["success"]:
-                return {0: auth_result}
+            # Validazione comandi
+            validation_result = self.validator.validate_commands(commands)
+            if not validation_result["is_valid"]:
+                raise ValueError(f"Comandi non validi: {validation_result['error']}")
 
-            # Step 2: Inizializza workspace
-            if not self.is_initialized:
-                init_result = self._initialize_workspace()
-                if not init_result["success"]:
-                    return {0: init_result}
+            # Inizializzazione workspace
+            init_result = self._initialize_workspace()
+            if not init_result["success"]:
+                raise ValueError(f"Errore nell'inizializzazione: {init_result['error']}")
 
-            # Step 3: Processa ogni comando
-            for command_data in commands:
-                step = command_data.get("step", 0)
-
+            # Conversione in oggetti GitHubCommand
+            github_commands = []
+            for cmd_data in commands:
                 try:
-                    # Converte in oggetto comando tipizzato
-                    command = GitHubCommand.from_dict(command_data)
+                    github_command = GitHubCommand.from_dict(cmd_data)
+                    github_commands.append(github_command)
+                except Exception as e:
+                    raise ValueError(f"Errore nella conversione comando step {cmd_data.get('step', '?')}: {str(e)}")
 
-                    # Esegue il comando
-                    result = self._execute_command(command)
-                    results[step] = result
+            # Processamento comandi
+            processed_steps = []
+            overall_success = True
 
-                    # Se un comando fallisce, ferma l'esecuzione
-                    if not result.get("success", False):
-                        break
+            for github_command in github_commands:
+                try:
+                    step_result = self._execute_command(github_command)
+                    processed_steps.append(step_result)
+
+                    if not step_result.success:
+                        overall_success = False
 
                 except Exception as e:
-                    results[step] = {
-                        "success": False,
-                        "error": str(e),
-                        "message": f"Errore nel comando step {step}: {str(e)}"
-                    }
-                    break
+                    error_step = ProcessedStep(
+                        step=github_command.step,
+                        success=False,
+                        message=f"Errore nell'esecuzione del comando step {github_command.step}",
+                        error=str(e),
+                        details={}
+                    )
+                    processed_steps.append(error_step)
+                    overall_success = False
 
-            return results
+            return GatewayResponse(
+                success=overall_success,
+                message="Elaborazione comandi completata" if overall_success else "Elaborazione completata con errori",
+                processed_steps=processed_steps,
+                repository_info=self.auth_manager.get_current_repo_info(),
+                user_info=self.auth_manager.get_user_info()
+            )
 
         except Exception as e:
-            return {
-                0: {
-                    "success": False,
-                    "error": str(e),
-                    "message": f"Errore generale nel processamento: {str(e)}"
-                }
-            }
+            raise ValueError(f"Errore nella validazione comandi: {str(e)}")
 
-    def _execute_command(self, command: GitHubCommand) -> Dict[str, Any]:
+    def _execute_command(self, command: GitHubCommand) -> ProcessedStep:
         """
-        Esegue un singolo comando
+        Esegue un singolo comando GitHub
 
         Args:
             command: Comando da eseguire
 
         Returns:
-            Dict con risultato dell'esecuzione
+            ProcessedStep con risultato dell'esecuzione
         """
         try:
+            # Dispatch del comando al metodo appropriato
             if command.command == CommandType.CREATE_FILE:
-                return self._create_file(command)
+                result = self._execute_create_file(command)
             elif command.command == CommandType.READ_FILE:
-                return self._read_file(command)
+                result = self._execute_read_file(command)
             elif command.command == CommandType.MODIFY_FILE:
-                return self._modify_file(command)
+                result = self._execute_modify_file(command)
             elif command.command == CommandType.DELETE_FILE:
-                return self._delete_file(command)
+                result = self._execute_delete_file(command)
             elif command.command == CommandType.SEARCH_FILE:
-                return self._search_file(command)
+                result = self._execute_search_file(command)
             elif command.command == CommandType.PULL:
-                return self._pull(command)
+                result = self._execute_pull(command)
             elif command.command == CommandType.COMMIT:
-                return self._commit(command)
+                result = self._execute_commit(command)
             elif command.command == CommandType.PUSH:
-                return self._push(command)
+                result = self._execute_push(command)
             elif command.command == CommandType.CREATE_BRANCH:
-                return self._create_branch(command)
+                result = self._execute_create_branch(command)
             elif command.command == CommandType.SWITCH_BRANCH:
-                return self._switch_branch(command)
+                result = self._execute_switch_branch(command)
             elif command.command == CommandType.CLONE:
-                return self._clone(command)
+                result = self._execute_clone(command)
             else:
-                return {
-                    "success": False,
-                    "error": f"Comando non supportato: {command.command}"
-                }
+                return ProcessedStep(
+                    step=command.step,
+                    success=False,
+                    message=f"Comando non supportato: {command.command}",
+                    error=f"Comando non implementato: {command.command}",
+                    details={}
+                )
+
+            return ProcessedStep(
+                step=command.step,
+                success=result.get("success", False),
+                message=result.get("message", ""),
+                error=result.get("error"),
+                details=result.get("details", {})
+            )
 
         except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "message": f"Errore nell'esecuzione del comando {command.command}: {str(e)}"
-            }
+            return ProcessedStep(
+                step=command.step,
+                success=False,
+                message=f"Errore nell'esecuzione del comando step {command.step}",
+                error=str(e),
+                details={}
+            )
 
-    def _create_file(self, command: GitHubCommand) -> Dict[str, Any]:
+    def _execute_create_file(self, command: GitHubCommand) -> Dict[str, Any]:
         """Gestisce il comando create.file"""
         return self.file_manager.create_file(command.path, command.content)
 
-    def _read_file(self, command: GitHubCommand) -> Dict[str, Any]:
+    def _execute_read_file(self, command: GitHubCommand) -> Dict[str, Any]:
         """Gestisce il comando read.file"""
         return self.file_manager.read_file(command.path)
 
-    def _modify_file(self, command: GitHubCommand) -> Dict[str, Any]:
+    def _execute_modify_file(self, command: GitHubCommand) -> Dict[str, Any]:
         """Gestisce il comando modify.file"""
         # Determina se è append o replace dal contenuto del comando
         # Se il path contiene "(append)", usa append mode
@@ -221,11 +281,11 @@ class GitHubGateway:
 
         return self.file_manager.modify_file(command.path, command.content, append_mode)
 
-    def _delete_file(self, command: GitHubCommand) -> Dict[str, Any]:
+    def _execute_delete_file(self, command: GitHubCommand) -> Dict[str, Any]:
         """Gestisce il comando delete.file"""
         return self.file_manager.delete_file(command.path)
 
-    def _search_file(self, command: GitHubCommand) -> Dict[str, Any]:
+    def _execute_search_file(self, command: GitHubCommand) -> Dict[str, Any]:
         """Gestisce il comando search.file"""
         # Il tipo di ricerca è determinato dal formato del content
         search_term = command.content
@@ -253,11 +313,11 @@ class GitHubGateway:
 
         return self.file_manager.search_files(search_term, search_type)
 
-    def _pull(self, command: GitHubCommand) -> Dict[str, Any]:
+    def _execute_pull(self, command: GitHubCommand) -> Dict[str, Any]:
         """Gestisce il comando pull"""
         return self.git_manager.pull()
 
-    def _commit(self, command: GitHubCommand) -> Dict[str, Any]:
+    def _execute_commit(self, command: GitHubCommand) -> Dict[str, Any]:
         """Gestisce il comando commit"""
         # Decodifica il messaggio di commit
         try:
@@ -268,19 +328,19 @@ class GitHubGateway:
 
         return self.git_manager.commit(commit_message)
 
-    def _push(self, command: GitHubCommand) -> Dict[str, Any]:
+    def _execute_push(self, command: GitHubCommand) -> Dict[str, Any]:
         """Gestisce il comando push"""
         return self.git_manager.push()
 
-    def _create_branch(self, command: GitHubCommand) -> Dict[str, Any]:
+    def _execute_create_branch(self, command: GitHubCommand) -> Dict[str, Any]:
         """Gestisce il comando create.branch"""
         return self.git_manager.create_branch(command.path)
 
-    def _switch_branch(self, command: GitHubCommand) -> Dict[str, Any]:
+    def _execute_switch_branch(self, command: GitHubCommand) -> Dict[str, Any]:
         """Gestisce il comando switch.branch"""
         return self.git_manager.switch_branch(command.path)
 
-    def _clone(self, command: GitHubCommand) -> Dict[str, Any]:
+    def _execute_clone(self, command: GitHubCommand) -> Dict[str, Any]:
         """Gestisce il comando clone"""
         # Il clone è già stato fatto durante l'inizializzazione
         return {

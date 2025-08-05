@@ -13,10 +13,6 @@ __pycache__/
 venv/
 env/
 
-# Repository temporanei clonati
-temp_repos/
-github_copilot_*/
-
 # File di sistema
 .DS_Store
 Thumbs.db
@@ -29,3 +25,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Repository temporanei clonati
+temp_repos/
+github_copilot_*/
